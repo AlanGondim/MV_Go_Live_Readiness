@@ -3,12 +3,11 @@ import pandas as pd
 import sqlite3
 from datetime import datetime
 from fpdf import FPDF
-import io
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Hub de Inteligência: Go-Live", layout="wide", page_icon="🚀")
 
-# --- BANCO DE DADOS (Persistência e Rastreabilidade) ---
+# --- BANCO DE DADOS ---
 def init_db():
     conn = sqlite3.connect('projetos_cloud.db', check_same_thread=False)
     c = conn.cursor()
@@ -20,41 +19,34 @@ def init_db():
 
 conn = init_db()
 
-# --- CLASSE E FUNÇÃO PARA PDF ---
+# --- FUNÇÕES DE APOIO ---
+def get_farol(percentual):
+    if percentual >= 90:
+        return "🟢 PRONTO", "#d4edda"
+    elif percentual >= 70:
+        return "🟡 ATENÇÃO", "#fff3cd"
+    else:
+        return "🔴 CRÍTICO", "#f8d7da"
+
 class PDF(FPDF):
     def header(self):
         self.set_font('Helvetica', 'B', 12)
-        self.cell(0, 10, 'Relatorio de Prontidao Go-Live (Readiness Report)', 0, 1, 'C')
+        self.cell(0, 10, 'Relatorio de Prontidao Go-Live', 0, 1, 'C')
         self.ln(5)
 
 def gerar_pdf(df, projeto, percentual):
     pdf = PDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-    pdf.set_fill_color(200, 220, 255)
     pdf.set_font("Helvetica", 'B', 10)
-    pdf.cell(0, 10, f"Projeto: {projeto}", 1, 1, 'L', 1)
-    pdf.set_font("Helvetica", size=10)
-    pdf.cell(0, 10, f"Status Global: {percentual:.1f}%", 1, 1, 'L', 1)
-    pdf.cell(0, 10, f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}", 1, 1, 'L', 1)
+    pdf.cell(0, 10, f"Projeto: {projeto} | Status: {get_farol(percentual)[0]}", 1, 1, 'L')
     pdf.ln(10)
-    pdf.set_font("Helvetica", 'B', 10)
-    pdf.cell(90, 8, "Item", 1, 0, 'C')
-    pdf.cell(30, 8, "Status", 1, 0, 'C')
-    pdf.cell(70, 8, "Observacoes", 1, 1, 'C')
     pdf.set_font("Helvetica", size=8)
     for _, row in df.iterrows():
-        status_txt = "CONCLUIDO" if row['status'] == 1 else "PENDENTE"
-        curr_x, curr_y = pdf.get_x(), pdf.get_y()
-        pdf.multi_cell(90, 8, row['item'], 1)
-        next_y = pdf.get_y()
-        alt = next_y - curr_y
-        pdf.set_xy(curr_x + 90, curr_y)
-        pdf.cell(30, alt, status_txt, 1, 0, 'C')
-        pdf.cell(70, alt, str(row['observacao']), 1, 1, 'L')
+        status = "OK" if row['status'] == 1 else "PENDENTE"
+        pdf.multi_cell(0, 8, f"[{status}] {row['categoria']} - {row['item']}", 1)
     return pdf.output()
 
-# --- LÓGICA DE NEGÓCIO ---
+# --- ESTRUTURA DO CHECKLIST ---
 CHECKLIST_DATA = {
     "5.1. Nível Operacional": [
         "Infraestrutura: Servidores, rede e terminais testados no local de uso?",
@@ -77,11 +69,11 @@ CHECKLIST_DATA = {
 }
 
 # --- NAVEGAÇÃO ---
-st.sidebar.title("🎮 Navegação")
-pagina = st.sidebar.radio("Ir para:", ["📝 Checklist de Projeto", "🏛️ Hub de Portfólio (IA)"])
+st.sidebar.title("🎮 Menu Principal")
+pagina = st.sidebar.radio("Selecione a Visão:", ["📝 Atualizar Checklist", "🏛️ Hub de Inteligência"])
 
-if pagina == "📝 Checklist de Projeto":
-    st.title("🚀 Go-Live Readiness")
+if pagina == "📝 Atualizar Checklist":
+    st.title("🚀 Go-Live Readiness Tracker")
     projeto_nome = st.sidebar.text_input("Nome do Projeto", value="Projeto Hospital Digital")
     responsavel = st.sidebar.text_input("Responsável Atual", value="GP_Responsavel")
 
@@ -101,7 +93,7 @@ if pagina == "📝 Checklist de Projeto":
                     obs = c2.text_input("Evidência", value=def_obs, key=f"obs_{item}", label_visibility="collapsed")
                     respostas[item] = {"status": status, "categoria": categoria, "obs": obs}
 
-        if st.form_submit_button("💾 Salvar/Atualizar no Hub"):
+        if st.form_submit_button("💾 Enviar para o Hub"):
             dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             c = conn.cursor()
             c.execute("DELETE FROM prontidao WHERE projeto=?", (projeto_nome,))
@@ -109,55 +101,51 @@ if pagina == "📝 Checklist de Projeto":
                 c.execute("INSERT INTO prontidao VALUES (?, ?, ?, ?, ?, ?, ?)",
                           (projeto_nome, d['categoria'], item, 1 if d['status'] else 0, d['obs'], dt, responsavel))
             conn.commit()
-            st.success("Dados enviados ao Hub com sucesso!")
+            st.success("Dados salvos!")
             st.rerun()
-
-    # Dashboard Individual
-    st.divider()
-    df_view = pd.read_sql_query(f"SELECT * FROM prontidao WHERE projeto='{projeto_nome}'", conn)
-    if not df_view.empty:
-        perc = (df_view['status'].sum() / len(df_view)) * 100
-        m1, m2, m3 = st.columns([1, 1, 1])
-        m1.metric("Prontidão Individual", f"{perc:.1f}%")
-        m2.progress(perc/100)
-        pdf_bytes = gerar_pdf(df_view, projeto_nome, perc)
-        m3.download_button("📥 Baixar PDF do Projeto", data=bytes(pdf_bytes), file_name=f"{projeto_nome}.pdf")
-        st.dataframe(df_view[['categoria', 'item', 'status', 'observacao']].style.applymap(
-            lambda x: 'background-color: #d4edda' if x == 1 else 'background-color: #f8d7da', subset=['status']
-        ), use_container_width=True)
 
 else:
     # --- HUB DE INTELIGÊNCIA ---
-    st.title("🏛️ Hub de Inteligência e Rastreabilidade")
+    st.title("🏛️ Hub de Inteligência (Farol de Prontidão)")
     df_hub = pd.read_sql_query("SELECT * FROM prontidao", conn)
 
     if not df_hub.empty:
-        # KPI Cards do Hub
-        num_projetos = df_hub['projeto'].nunique()
-        prontidao_media = (df_hub['status'].sum() / len(df_hub)) * 100
+        # --- FAROL GLOBAL POR PROJETO ---
+        st.subheader("🚩 Status Geral do Portfólio")
+        projs = df_hub['projeto'].unique()
+        cols = st.columns(len(projs) if len(projs) <= 4 else 4)
         
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total de Projetos no Hub", num_projetos)
-        c2.metric("Média de Prontidão (Portfólio)", f"{prontidao_media:.1f}%")
-        c3.info("Base de Dados: Cloud SQL Ativa")
+        for i, proj in enumerate(projs):
+            df_p = df_hub[df_hub['projeto'] == proj]
+            p_perc = df_p['status'].mean() * 100
+            label, cor = get_farol(p_perc)
+            with cols[i % 4]:
+                st.markdown(f"""
+                <div style="background-color:{cor}; padding:20px; border-radius:10px; border:1px solid #ccc; text-align:center;">
+                    <h4 style="color:black; margin:0;">{proj}</h4>
+                    <h2 style="color:black; margin:10px 0;">{p_perc:.1f}%</h2>
+                    <b style="color:black;">{label}</b>
+                </div>
+                """, unsafe_allow_html=True)
 
-        st.subheader("📊 Saúde do Portfólio")
-        # Gráfico comparativo entre projetos
-        chart_hub = df_hub.groupby('projeto')['status'].mean() * 100
-        st.bar_chart(chart_hub)
+        # --- COMPARATIVO LADO A LADO ---
+        st.divider()
+        st.subheader("⚖️ Comparativo de Performance")
+        p1 = st.selectbox("Projeto A", projs, index=0)
+        p2 = st.selectbox("Projeto B", projs, index=min(1, len(projs)-1))
 
-        st.subheader("📑 Registro Geral de Artefatos")
-        st.write("Consulte aqui a última versão de cada item de cada projeto cadastrado.")
+        df_p1 = df_hub[df_hub['projeto'] == p1]
+        df_p2 = df_hub[df_hub['projeto'] == p2]
         
-        # Filtro de Busca
-        search = st.text_input("Filtrar Hub por Nome de Projeto ou Responsável")
-        filtered_df = df_hub[df_hub['projeto'].str.contains(search, case=False) | 
-                             df_hub['responsavel'].str.contains(search, case=False)]
-        
-        st.dataframe(filtered_df.sort_values(by="data_atualizacao", ascending=False), use_container_width=True)
-        
-        # Auditoria de Mudanças
-        with st.expander("🕵️ Ver Histórico de Auditoria"):
-            st.table(df_hub[['projeto', 'data_atualizacao', 'responsavel']].drop_duplicates())
+        comp_data = pd.DataFrame({
+            p1: df_p1.groupby('categoria')['status'].mean() * 100,
+            p2: df_p2.groupby('categoria')['status'].mean() * 100
+        })
+        st.bar_chart(comp_data)
+
+        # --- TABELA DE AUDITORIA ---
+        st.divider()
+        st.subheader("🕵️ Trilha de Rastreabilidade")
+        st.dataframe(df_hub.sort_values(by="data_atualizacao", ascending=False), use_container_width=True)
     else:
-        st.warning("O Hub ainda está vazio. Cadastre o primeiro projeto para gerar inteligência.")
+        st.warning("O Hub está vazio.")
