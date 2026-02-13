@@ -73,7 +73,7 @@ st.sidebar.title("🎮 Menu Principal")
 pagina = st.sidebar.radio("Selecione a Visão:", ["📝 Atualizar Checklist", "🏛️ Hub de Inteligência"])
 
 if pagina == "📝 Atualizar Checklist":
-    st.title("🚀 Go-Live Readiness Tracker")
+    st.title("🚀 Go-Live Readiness")
     projeto_nome = st.sidebar.text_input("Nome do Projeto", value="Projeto Hospital Digital")
     responsavel = st.sidebar.text_input("Responsável Atual", value="GP_Responsavel")
 
