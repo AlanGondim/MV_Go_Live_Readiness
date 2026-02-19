@@ -12,11 +12,12 @@ st.set_page_config(page_title="Hub de Inteligência: Go-Live", layout="wide", pa
 
 # --- BANCO DE DADOS ---
 def init_db():
-    conn = sqlite3.connect('projetos_cloud.db', check_same_thread=False)
+    conn = sqlite3.connect('projetos_cloud_v2.db', check_same_thread=False)
     c = conn.cursor()
+    # Adicionado campo 'versao_id' para rastrear snapshots
     c.execute('''CREATE TABLE IF NOT EXISTS prontidao 
                  (projeto TEXT, categoria TEXT, item TEXT, status INTEGER, 
-                  observacao TEXT, data_atualizacao TEXT, responsavel TEXT)''')
+                  observacao TEXT, data_atualizacao TEXT, responsavel TEXT, versao_id TEXT)''')
     conn.commit()
     return conn
 
@@ -57,7 +58,7 @@ class PDF_Executivo(FPDF):
         self.set_text_color(44, 62, 80)
         self.cell(0, 10, 'HUB DE INTELIGENCIA - RELATORIO ESTRATEGICO GO-LIVE', 0, 1, 'C')
         self.set_font('Helvetica', 'I', 9)
-        self.cell(0, 5, f'Gerado em: {datetime.now().strftime("%d/%m/%Y %H:%M")}', 0, 1, 'C')
+        self.cell(0, 5, f'Relatorio Gerado em: {datetime.now().strftime("%d/%m/%Y %H:%M")}', 0, 1, 'C')
         self.ln(10)
         self.line(10, 28, 200, 28)
 
@@ -77,28 +78,27 @@ class PDF_Executivo(FPDF):
         self.set_fill_color(r, g, b)
         self.ellipse(x, y, 4, 4, 'F')
 
-def gerar_pdf_completo(df_projeto, nome_projeto):
+def gerar_pdf_completo(df_projeto, nome_projeto, data_versao):
     pdf = PDF_Executivo(orientation='P', unit='mm', format='A4')
     pdf.add_page()
     pdf.draw_watermark()
     
-    # 1. Cabeçalho
     percentual = df_projeto['status'].mean() * 100
     label, rgb_cor, _ = get_farol(percentual)
     
     pdf.set_font('Helvetica', 'B', 12)
     pdf.set_fill_color(230, 230, 230)
     pdf.cell(0, 10, f"PROJETO: {nome_projeto.upper()}", 1, 1, 'L', fill=True)
+    pdf.set_font('Helvetica', 'I', 10)
+    pdf.cell(0, 8, f"Versao Referente a: {data_versao}", 0, 1, 'L')
     
-    # 2. Resumo e Radar
     pdf.ln(5)
-    pdf.set_font('Helvetica', 'B', 11)
-    pdf.cell(0, 8, "RESUMO DE PERFORMANCE POR NIVEL", 0, 1)
-    
     cat_data = df_projeto.groupby('categoria')['status'].mean() * 100
     img_buf = gerar_grafico_radar(cat_data.index, cat_data.values)
-    pdf.image(img_buf, x=125, y=45, w=70)
+    pdf.image(img_buf, x=125, y=55, w=70)
     
+    pdf.set_font('Helvetica', 'B', 11)
+    pdf.cell(0, 8, "PERFORMANCE POR NIVEL", 0, 1)
     pdf.set_font('Helvetica', '', 10)
     for cat, val in cat_data.items():
         pdf.cell(100, 7, f"- {cat}: {val:.1f}%", 0, 1)
@@ -113,31 +113,26 @@ def gerar_pdf_completo(df_projeto, nome_projeto):
     pdf.set_text_color(0)
     
     pdf.ln(20) 
-    
-    # 3. Trilha de Rastreabilidade
     pdf.set_font('Helvetica', 'B', 11)
-    pdf.cell(0, 8, "TRILHA DE RASTREABILIDADE E EVIDENCIAS", 0, 1)
+    pdf.cell(0, 8, "DETALHAMENTO E RASTREABILIDADE", 0, 1)
     
     pdf.set_font('Helvetica', 'B', 8)
     pdf.set_fill_color(200, 200, 200)
-    pdf.cell(85, 8, "Item / Entrega", 1, 0, 'C', True)
+    pdf.cell(85, 8, "Item", 1, 0, 'C', True)
     pdf.cell(20, 8, "Status", 1, 0, 'C', True)
-    pdf.cell(45, 8, "Evidencia/Obs", 1, 0, 'C', True)
-    pdf.cell(40, 8, "Data/Resp", 1, 1, 'C', True)
+    pdf.cell(45, 8, "Evidencia", 1, 0, 'C', True)
+    pdf.cell(40, 8, "Responsavel", 1, 1, 'C', True)
     
     pdf.set_font('Helvetica', '', 7)
     for _, row in df_projeto.iterrows():
-        status_txt = "CONCLUIDO" if row['status'] == 1 else "PENDENTE"
-        x_start, y_start = pdf.get_x(), pdf.get_y()
-        
+        status_txt = "OK" if row['status'] == 1 else "PENDENTE"
+        y_start = pdf.get_y()
         pdf.multi_cell(85, 5, row['item'], 1, 'L')
         h = pdf.get_y() - y_start
-        
-        pdf.set_xy(x_start + 85, y_start)
+        pdf.set_xy(95, y_start)
         pdf.cell(20, h, status_txt, 1, 0, 'C')
-        pdf.cell(45, h, str(row['observacao'])[:35], 1, 0, 'L')
-        data_limpa = str(row['data_atualizacao'])[:10]
-        pdf.multi_cell(40, h/2 if h > 10 else h, f"{row['responsavel']}\n{data_limpa}", 1, 'C')
+        pdf.cell(45, h, str(row['observacao'])[:30], 1, 0, 'L')
+        pdf.cell(40, h, row['responsavel'], 1, 1, 'C')
 
     return pdf.output(dest='S')
 
@@ -163,16 +158,14 @@ CHECKLIST_DATA = {
     ]
 }
 
-# --- NAVEGAÇÃO STREAMLIT ---
-st.sidebar.title("🎮 Menu Principal")
-pagina = st.sidebar.radio("Selecione a Visão:", ["📝 Atualizar Checklist", "🏛️ Hub de Inteligência"])
+# --- NAVEGAÇÃO ---
+st.sidebar.title("🚀 Sistema Go-Live")
+pagina = st.sidebar.radio("Menu:", ["📝 Novo Checklist", "🏛️ Hub & Histórico"])
 
-if pagina == "📝 Atualizar Checklist":
-    st.title("🚀 Go-Live Readiness")
-    projeto_nome = st.sidebar.text_input("Nome do Projeto", value="Projeto Hospital Digital")
-    responsavel = st.sidebar.text_input("Responsável Atual", value="GP_Responsavel")
-
-    df_atual = pd.read_sql_query(f"SELECT * FROM prontidao WHERE projeto='{projeto_nome}'", conn)
+if pagina == "📝 Novo Checklist":
+    st.title("📝 Atualizar Prontidão")
+    projeto_nome = st.text_input("Nome do Projeto", value="Projeto Hospital Digital")
+    responsavel = st.text_input("Responsável", value="GP_Responsavel")
 
     with st.form("checklist_form"):
         tabs = st.tabs(list(CHECKLIST_DATA.keys()))
@@ -180,72 +173,81 @@ if pagina == "📝 Atualizar Checklist":
         for i, (categoria, itens) in enumerate(CHECKLIST_DATA.items()):
             with tabs[i]:
                 for item in itens:
-                    item_ant = df_atual[df_atual['item'] == item]
-                    def_stat = bool(item_ant['status'].iloc[0]) if not item_ant.empty else False
-                    def_obs = item_ant['observacao'].iloc[0] if not item_ant.empty else ""
                     c1, c2 = st.columns([2, 1])
-                    status = c1.checkbox(item, value=def_stat, key=f"chk_{item}")
-                    obs = c2.text_input("Evidência", value=def_obs, key=f"obs_{item}", label_visibility="collapsed")
+                    status = c1.checkbox(item, key=f"chk_{item}")
+                    obs = c2.text_input("Evidência", key=f"obs_{item}", label_visibility="collapsed")
                     respostas[item] = {"status": status, "categoria": categoria, "obs": obs}
 
-        if st.form_submit_button("💾 Enviar para o Hub"):
+        if st.form_submit_button("💾 Salvar Nova Versão no Hub"):
             dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            v_id = datetime.now().strftime("%Y%m%d%H%M%S") # ID único da versão
             c = conn.cursor()
-            c.execute("DELETE FROM prontidao WHERE projeto=?", (projeto_nome,))
             for item, d in respostas.items():
-                c.execute("INSERT INTO prontidao VALUES (?, ?, ?, ?, ?, ?, ?)",
-                          (projeto_nome, d['categoria'], item, 1 if d['status'] else 0, d['obs'], dt, responsavel))
+                c.execute("INSERT INTO prontidao VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                          (projeto_nome, d['categoria'], item, 1 if d['status'] else 0, d['obs'], dt, responsavel, v_id))
             conn.commit()
-            
-            # --- MENSAGEM DE SUCESSO APRIMORADA ---
-            st.toast(f"Checklist do {projeto_nome} enviado com sucesso!", icon='✅')
-            st.success(f"**Sucesso!** O checklist do projeto '{projeto_nome}' foi sincronizado com o Hub de Inteligência.")
-            st.info(f"📅 Data da Versão: {dt} | Responsável: {responsavel}")
-            
-            if st.button("Ir para o Hub agora"):
-                st.switch_page(pagina="🏛️ Hub de Inteligência")
+            st.success(f"✅ Versão de {dt} salva com sucesso!")
+            st.toast("Dados sincronizados!", icon='🚀')
 
 else:
-    # --- HUB DE INTELIGÊNCIA ---
-    st.title("🏛️ Hub de Inteligência (Farol de Prontidão)")
-    df_hub = pd.read_sql_query("SELECT * FROM prontidao", conn)
+    st.title("🏛️ Hub de Inteligência e Histórico")
+    df_all = pd.read_sql_query("SELECT * FROM prontidao", conn)
 
-    if not df_hub.empty:
-        projs = df_hub['projeto'].unique()
-        cols = st.columns(len(projs) if len(projs) <= 4 else 4)
+    if not df_all.empty:
+        projeto_sel = st.selectbox("Escolha o Projeto:", df_all['projeto'].unique())
         
-        for i, proj in enumerate(projs):
-            df_p = df_hub[df_hub['projeto'] == proj]
-            p_perc = df_p['status'].mean() * 100
-            label, _, cor_hex = get_farol(p_perc)
-            emoji = "🟢" if "PRONTO" in label else "🟡" if "ATENCAO" in label else "🔴"
+        # Filtrar versões do projeto escolhido
+        df_proj_total = df_all[df_all['projeto'] == projeto_sel]
+        versoes = df_proj_total[['data_atualizacao', 'versao_id']].drop_duplicates().sort_values(by='data_atualizacao', ascending=False)
+        
+        col_hist, col_vis = st.columns([1, 2])
+        
+        with col_hist:
+            st.subheader("📜 Versões Salvas")
+            # Seleção da versão para visualização
+            v_selecionada = st.radio("Selecione uma data para ver o farol:", 
+                                     versoes['data_atualizacao'].tolist(), 
+                                     index=0)
             
-            with cols[i % 4]:
-                st.markdown(f"""
-                <div style="background-color:{cor_hex}; padding:15px; border-radius:10px; border:1px solid #999; text-align:center; color:black; min-height:150px;">
-                    <small>{proj}</small><h3>{p_perc:.1f}%</h3><b>{emoji} {label}</b>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                pdf_bytes = gerar_pdf_completo(df_p, proj)
-                st.download_button(
-                    label=f"📥 Relatório PDF",
-                    data=bytes(pdf_bytes),
-                    file_name=f"Relatorio_GoLive_{proj}.pdf",
-                    mime="application/pdf",
-                    key=f"pdf_{proj}",
-                    use_container_width=True
-                )
+            v_id_sel = versoes[versoes['data_atualizacao'] == v_selecionada]['versao_id'].values[0]
+            df_snapshot = df_proj_total[df_proj_total['versao_id'] == v_id_sel]
+            
+            # Métricas da Versão Selecionada
+            p_perc = df_snapshot['status'].mean() * 100
+            label, _, cor_hex = get_farol(p_perc)
+            
+            st.markdown(f"""
+            <div style="background-color:{cor_hex}; padding:20px; border-radius:10px; border:2px solid #333; text-align:center; color:black;">
+                <h4>Status em {v_selecionada[:10]}</h4>
+                <h1>{p_perc:.1f}%</h1>
+                <b>{label}</b>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Botão de PDF para esta versão específica
+            pdf_v = gerar_pdf_completo(df_snapshot, projeto_sel, v_selecionada)
+            st.download_button(
+                label="📥 Baixar PDF desta Versão",
+                data=bytes(pdf_v),
+                file_name=f"Relatorio_{projeto_sel}_{v_id_sel}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+
+        with col_vis:
+            st.subheader("📊 Análise de Evolução")
+            cat_radar = df_snapshot.groupby('categoria')['status'].mean() * 100
+            fig_st = gerar_grafico_radar(cat_radar.index, cat_radar.values)
+            st.image(fig_st, caption=f"Mapa de Prontidão - Versão: {v_selecionada}")
+            
+            with st.expander("Ver Detalhes da Trilha de Rastreabilidade"):
+                st.table(df_snapshot[['categoria', 'item', 'status', 'responsavel']])
 
         st.divider()
-        st.subheader("📊 Analise Multidimensional (Radar)")
-        p_escolhido = st.selectbox("Selecione o projeto para visualizacao:", projs)
-        df_radar = df_hub[df_hub['projeto'] == p_escolhido]
-        cat_radar = df_radar.groupby('categoria')['status'].mean() * 100
-        
-        # 
-        fig_st = gerar_grafico_radar(cat_radar.index, cat_radar.values)
-        st.image(fig_st, caption=f"Mapa de Prontidao: {p_escolhido}", width=500)
+        st.subheader("📈 Linha do Tempo de Performance")
+        # Gráfico de linha mostrando a evolução do projeto ao longo das versões
+        evolucao = df_proj_total.groupby('data_atualizacao')['status'].mean() * 100
+        st.line_chart(evolucao)
 
     else:
-        st.warning("O Hub está vazio. Preencha o checklist para começar.")
+        st.warning("O banco de dados está vazio. Crie o primeiro checklist.")
