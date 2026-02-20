@@ -195,7 +195,7 @@ else:
             st.markdown(f"<div style='background-color:{cor}; padding:20px; border-radius:10px; color:black; text-align:center;'><h2>{p_final:.1f}%</h2><b>{label}</b></div>", unsafe_allow_html=True)
             
             pdf_data = gerar_pdf_completo(df_v, proj_sel, v_escolhida)
-            st.download_button("📥 Baixar PDF (Snaphot)", data=bytes(pdf_data), file_name=f"Relatorio_{vid_sel}.pdf", mime="application/pdf")
+            st.download_button("📥 Baixar PDF ", data=bytes(pdf_data), file_name=f"Relatorio_{vid_sel}.pdf", mime="application/pdf")
 
         with col2:
             st.subheader("Análise Dimensional")
