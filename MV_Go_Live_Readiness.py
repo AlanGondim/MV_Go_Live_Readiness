@@ -12,7 +12,7 @@ st.set_page_config(page_title="Hub de Inteligencia: Go-Live", layout="wide", pag
 
 # --- BANCO DE DADOS ---
 def init_db():
-    conn = sqlite3.connect('projetos_cloud_v2.db', check_same_thread=False)
+    conn = sqlite3.connect('projetos_cloud_v3.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS prontidao 
                  (projeto TEXT, categoria TEXT, item TEXT, status INTEGER, 
@@ -50,7 +50,7 @@ def gerar_grafico_radar(categorias, valores):
     plt.close(fig)
     return buf
 
-# --- CLASSE PDF CUSTOMIZADA (CORRIGIDA) ---
+# --- CLASSE PDF CUSTOMIZADA (CORREÇÃO DEFINITIVA DA ROTAÇÃO) ---
 class PDF_Executivo(FPDF):
     def header(self):
         self.set_font('Helvetica', 'B', 14)
@@ -67,12 +67,13 @@ class PDF_Executivo(FPDF):
         self.cell(0, 10, f'Pagina {self.page_no()}', 0, 0, 'C')
 
     def draw_watermark(self):
-        self.set_font('Helvetica', 'B', 45)
-        self.set_text_color(230, 230, 230) # Cinza muito claro
-        # Correção do erro de rotação: usando contexto seguro
-        with self.rotation(angle=45, x=105, y=155):
-            self.text(x=40, y=155, txt="C O N F I D E N C I A L")
-        self.set_text_color(0)
+        """Usa local_context para garantir que a rotação não quebre o restante do PDF."""
+        self.set_font('Helvetica', 'B', 50)
+        self.set_text_color(230, 230, 230)
+        with self.local_context():
+            # Rotate em torno do centro da página A4 (105, 148)
+            self.rotate(45, x=105, y=148)
+            self.text(x=35, y=148, txt="C O N F I D E N C I A L")
 
     def desenhar_farol(self, x, y, r, g, b):
         self.set_fill_color(r, g, b)
@@ -90,16 +91,16 @@ def gerar_pdf_completo(df_projeto, nome_projeto, data_versao):
     pdf.set_fill_color(230, 230, 230)
     pdf.cell(0, 10, f"PROJETO: {nome_projeto.upper()}", 1, 1, 'L', fill=True)
     pdf.set_font('Helvetica', 'I', 10)
-    pdf.cell(0, 8, f"Snaphost de: {data_versao}", 0, 1, 'L')
+    pdf.cell(0, 8, f"Snapshot de: {data_versao}", 0, 1, 'L')
     
-    # Radar Chart
+    # Adicionar Radar Chart
     cat_data = df_projeto.groupby('categoria')['status'].mean() * 100
     img_buf = gerar_grafico_radar(cat_data.index, cat_data.values)
-    pdf.image(img_buf, x=125, y=55, w=70)
+    pdf.image(img_buf, x=130, y=50, w=65)
     
     pdf.ln(5)
     pdf.set_font('Helvetica', 'B', 11)
-    pdf.cell(0, 8, "PERFORMANCE POR CATEGORIA", 0, 1)
+    pdf.cell(0, 8, "DESEMPENHO POR NIVEL", 0, 1)
     pdf.set_font('Helvetica', '', 10)
     for cat, val in cat_data.items():
         pdf.cell(100, 7, f"- {cat}: {val:.1f}%", 0, 1)
@@ -116,7 +117,7 @@ def gerar_pdf_completo(df_projeto, nome_projeto, data_versao):
     pdf.set_font('Helvetica', 'B', 10)
     pdf.cell(0, 8, "TRILHA DE RASTREABILIDADE", 0, 1)
     
-    # Tabela
+    # Tabela de Itens
     pdf.set_font('Helvetica', 'B', 8)
     pdf.set_fill_color(200, 200, 200)
     pdf.cell(90, 8, "Item", 1, 0, 'C', True)
@@ -127,106 +128,84 @@ def gerar_pdf_completo(df_projeto, nome_projeto, data_versao):
     pdf.set_font('Helvetica', '', 7)
     for _, row in df_projeto.iterrows():
         status_txt = "OK" if row['status'] == 1 else "PENDENTE"
-        y_pre = pdf.get_y()
+        y_ini = pdf.get_y()
         pdf.multi_cell(90, 5, row['item'], 1, 'L')
-        h = pdf.get_y() - y_pre
-        pdf.set_xy(100, y_pre)
+        h = pdf.get_y() - y_ini
+        pdf.set_xy(100, y_ini)
         pdf.cell(20, h, status_txt, 1, 0, 'C')
         pdf.cell(40, h, row['responsavel'], 1, 0, 'C')
         pdf.cell(40, h, row['data_atualizacao'][:10], 1, 1, 'C')
 
     return pdf.output(dest='S')
 
-# --- ESTRUTURA ---
+# --- LOGICA DA INTERFACE ---
 CHECKLIST_DATA = {
-    "5.1. Nivel Operacional": [
-        "Infraestrutura: Servidores, rede e terminais testados?",
-        "Acesso: Usuarios com logins e passwords ativos?",
-        "Capacitacao: Multiplicadores aptos a apoiar?",
-        "Carga de Dados: Migracao critica concluida?"
-    ],
-    "5.2. Nivel Tatico": [
-        "Simulacao Geral: Teste ponta a ponta realizado?",
-        "Procedimentos: Manuais disponiveis nos setores?",
-        "Contingencia: Plano de falhas testado?",
-        "Bugs: Erros criticos resolvidos?"
-    ],
-    "5.3. Nivel Estrategico": [
-        "Comunicacao: Publicos externos avisados?",
-        "Suporte: Equipes de reforco garantidas?",
-        "KPIs: Metricas de sucesso definidas?",
-        "Veredicto: Autorizacao formal Go-NoGo?"
-    ]
+    "5.1. Nivel Operacional": ["Infraestrutura ok?", "Acessos ok?", "Capacitacao ok?", "Dados migrados?"],
+    "5.2. Nivel Tatico": ["Simulacao Geral?", "Manuais disponiveis?", "Contingencia?", "Bugs críticos?"],
+    "5.3. Nivel Estrategico": ["Comunicacao ok?", "Suporte garantido?", "KPIs definidos?", "Go-NoGo aprovado?"]
 }
 
-# --- INTERFACE STREAMLIT ---
-st.sidebar.title("🚀 Go-Live Hub")
-pagina = st.sidebar.radio("Navegacao:", ["📝 Novo Checklist", "🏛️ Hub de Inteligencia"])
+st.sidebar.title("🚀 Go-Live System")
+menu = st.sidebar.radio("Navegar:", ["📝 Novo Registro", "🏛️ Hub & Historico"])
 
-if pagina == "📝 Novo Checklist":
-    st.title("📝 Registrar Prontidao")
-    col_p, col_r = st.columns(2)
-    proj_n = col_p.text_input("Projeto", value="Hospital Digital")
-    resp_n = col_r.text_input("Responsavel", value="GP_User")
-
-    with st.form("f_check"):
+if menu == "📝 Novo Registro":
+    st.title("📝 Atualizar Checklist")
+    p_nome = st.text_input("Nome do Projeto", value="Projeto Alpha")
+    p_resp = st.text_input("Responsavel", value="Admin")
+    
+    with st.form("main_form"):
         tabs = st.tabs(list(CHECKLIST_DATA.keys()))
-        resps = {}
+        results = {}
         for i, (cat, itens) in enumerate(CHECKLIST_DATA.items()):
             with tabs[i]:
                 for it in itens:
                     c1, c2 = st.columns([3, 1])
-                    st_it = c1.checkbox(it, key=f"c_{it}")
-                    obs_it = c2.text_input("Obs", key=f"o_{it}", label_visibility="collapsed")
-                    resps[it] = {"status": st_it, "cat": cat, "obs": obs_it}
+                    chk = c1.checkbox(it, key=f"c_{it}")
+                    obs = c2.text_input("Evidência", key=f"o_{it}", label_visibility="collapsed")
+                    results[it] = {"status": chk, "cat": cat, "obs": obs}
         
-        if st.form_submit_button("💾 Salvar Versao"):
-            now = datetime.now()
-            dt_s = now.strftime("%Y-%m-%d %H:%M:%S")
-            v_id = now.strftime("%Y%m%d%H%M%S")
-            c = conn.cursor()
-            for it, d in resps.items():
-                c.execute("INSERT INTO prontidao VALUES (?,?,?,?,?,?,?,?)",
-                          (proj_n, d['cat'], it, 1 if d['status'] else 0, d['obs'], dt_s, resp_n, v_id))
+        if st.form_submit_button("💾 Salvar Snapshot"):
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            vid = datetime.now().strftime("%Y%m%d%H%M%S")
+            cur = conn.cursor()
+            for it, d in results.items():
+                cur.execute("INSERT INTO prontidao VALUES (?,?,?,?,?,?,?,?)", 
+                           (p_nome, d['cat'], it, 1 if d['status'] else 0, d['obs'], ts, p_resp, vid))
             conn.commit()
-            st.success("Checklist sincronizado com sucesso!")
-            st.toast("Hub Atualizado!")
+            st.success(f"Snapshot {vid} salvo com sucesso!")
 
 else:
-    st.title("🏛️ Hub de Inteligencia e Historico")
+    st.title("🏛️ Hub de Inteligencia")
     df_hub = pd.read_sql_query("SELECT * FROM prontidao", conn)
-
+    
     if not df_hub.empty:
-        proj_sel = st.selectbox("Selecione o Projeto:", df_hub['projeto'].unique())
+        proj_sel = st.selectbox("Projeto:", df_hub['projeto'].unique())
         df_p = df_hub[df_hub['projeto'] == proj_sel]
         
         versoes = df_p[['data_atualizacao', 'versao_id']].drop_duplicates().sort_values(by='data_atualizacao', ascending=False)
         
-        col_l, col_r = st.columns([1, 2])
-        
-        with col_l:
-            v_date = st.radio("Versoes disponiveis:", versoes['data_atualizacao'].tolist())
-            v_id = versoes[versoes['data_atualizacao'] == v_date]['versao_id'].values[0]
-            df_v = df_p[df_p['versao_id'] == v_id]
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            v_escolhida = st.selectbox("Escolha a Versao:", versoes['data_atualizacao'].tolist())
+            vid_sel = versoes[versoes['data_atualizacao'] == v_escolhida]['versao_id'].values[0]
+            df_v = df_p[df_p['versao_id'] == vid_sel]
             
-            perc = df_v['status'].mean() * 100
-            label, _, cor = get_farol(perc)
-            st.markdown(f"""<div style="background-color:{cor}; padding:20px; border-radius:10px; color:black; text-align:center;">
-                            <h3>{perc:.1f}%</h3><b>{label}</b></div>""", unsafe_allow_html=True)
+            p_final = df_v['status'].mean() * 100
+            label, _, cor = get_farol(p_final)
+            st.markdown(f"<div style='background-color:{cor}; padding:20px; border-radius:10px; color:black; text-align:center;'><h2>{p_final:.1f}%</h2><b>{label}</b></div>", unsafe_allow_html=True)
             
-            # Gerar PDF
-            pdf_out = gerar_pdf_completo(df_v, proj_sel, v_date)
-            st.download_button("📥 Baixar PDF desta Versao", data=bytes(pdf_out), 
-                               file_name=f"Relatorio_{proj_sel}_{v_id}.pdf", mime="application/pdf", use_container_width=True)
+            pdf_data = gerar_pdf_completo(df_v, proj_sel, v_escolhida)
+            st.download_button("📥 Baixar PDF (Snaphot)", data=bytes(pdf_data), file_name=f"Relatorio_{vid_sel}.pdf", mime="application/pdf")
 
-        with col_r:
-            cat_r = df_v.groupby('categoria')['status'].mean() * 100
+        with col2:
+            st.subheader("Análise Dimensional")
             # 
-            st.image(gerar_grafico_radar(cat_r.index, cat_r.values), caption=f"Mapa de Prontidao: {v_date}")
-            
+            cat_perf = df_v.groupby('categoria')['status'].mean() * 100
+            st.image(gerar_grafico_radar(cat_perf.index, cat_perf.values))
+
         st.divider()
-        st.subheader("📈 Evolucao do Projeto")
+        st.subheader("📈 Linha do Tempo")
         evol = df_p.groupby('data_atualizacao')['status'].mean() * 100
         st.line_chart(evol)
     else:
-        st.info("Aguardando o primeiro registro no checklist.")
+        st.info("Nenhum dado encontrado.")
